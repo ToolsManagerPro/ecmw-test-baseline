@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ECMW Fleet Manager Pro</title>
+    <title>ECMW Global Fleet Manager</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -11,18 +11,23 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; scroll-behavior: smooth; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(10px); }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="bg-slate-50 text-slate-900 min-h-screen">
     <div id="root"></div>
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        // --- ALL OPTIONS FROM YOUR OLD CONSTANTS ---
+        const ENTITIES = ["ECM4", "ECM7", "ECM10"];
+        const STATUSES = ["Repo IPs", "Verification", "ADD contact", "Repoting", "EMPTY", "LOGING", "Hold", "DOWN"];
+        const PLATFORMS = ["ECM_APP", "iMACROS"];
+        const TEAMS = ["A", "B", "C"];
+
+        // --- YOUR COMPLETE DATASET ---
         const INITIAL_DATA = [
             {"id":"1","entity":"ECM4","entityProd":"ECM4","platform":"ECM_APP","team":"A","localExternal":"External","pack":"Pack1","dataSeeds":"oui","server":"194.163.144.27","disk":"externe","rdps":"repo","password":"LABO@0000","interval":"1-3999","browser":"Chrome","status":"Repoting","countProfiles":"3999","backup":"Non","totalSeedsOk":"","notes":""},
             {"id":"2","entity":"ECM4","entityProd":"ECM4","platform":"ECM_APP","team":"A","localExternal":"External","pack":"Pack2","dataSeeds":"oui","server":"185.216.75.117","disk":"externe","rdps":"repo","password":"LABO@0000","interval":"1-5000","browser":"Chrome","status":"Repo IPs","countProfiles":"5000","backup":"Non","totalSeedsOk":"","notes":""},
@@ -46,191 +51,214 @@
 
         function App() {
             const [packs, setPacks] = useState(() => {
-                const saved = localStorage.getItem('ecmw_data_v2');
+                const saved = localStorage.getItem('ecmw_master_store');
                 return saved ? JSON.parse(saved) : INITIAL_DATA;
             });
-            const [search, setSearch] = useState('');
-            const [modalOpen, setModalOpen] = useState(false);
-            const [currentPack, setCurrentPack] = useState(null);
+
+            const [filters, setFilters] = useState({ search: '', entity: '', status: '' });
+            const [modal, setModal] = useState({ open: false, data: null });
 
             useEffect(() => {
-                localStorage.setItem('ecmw_data_v2', JSON.stringify(packs));
+                localStorage.setItem('ecmw_master_store', JSON.stringify(packs));
             }, [packs]);
 
-            const filtered = useMemo(() => {
-                return packs.filter(p => 
-                    Object.values(p).some(val => String(val).toLowerCase().includes(search.toLowerCase()))
-                );
-            }, [packs, search]);
+            const filteredPacks = useMemo(() => {
+                return packs.filter(p => {
+                    const matchesSearch = Object.values(p).some(v => String(v).toLowerCase().includes(filters.search.toLowerCase()));
+                    const matchesEntity = !filters.entity || p.entity === filters.entity;
+                    const matchesStatus = !filters.status || p.status === filters.status;
+                    return matchesSearch && matchesEntity && matchesStatus;
+                });
+            }, [packs, filters]);
 
-            const stats = useMemo(() => {
-                return {
-                    total: filtered.length,
-                    profiles: filtered.reduce((acc, p) => acc + (parseInt(p.countProfiles) || 0), 0)
-                };
-            }, [filtered]);
+            const stats = useMemo(() => ({
+                count: filteredPacks.length,
+                profiles: filteredPacks.reduce((acc, p) => acc + (parseInt(p.countProfiles) || 0), 0),
+                down: filteredPacks.filter(p => p.status === 'DOWN' || p.status === 'Hold').length
+            }), [filteredPacks]);
 
             const handleSave = (e) => {
                 e.preventDefault();
-                const formData = new FormData(e.target);
-                const data = Object.fromEntries(formData.entries());
-                
-                if (currentPack) {
-                    setPacks(prev => prev.map(p => p.id === currentPack.id ? {...p, ...data} : p));
+                const fd = new FormData(e.target);
+                const newData = Object.fromEntries(fd.entries());
+                if (modal.data?.id) {
+                    setPacks(prev => prev.map(p => p.id === modal.data.id ? {...p, ...newData} : p));
                 } else {
-                    setPacks(prev => [{...data, id: Date.now().toString()}, ...prev]);
+                    setPacks(prev => [{...newData, id: Date.now().toString()}, ...prev]);
                 }
-                setModalOpen(false);
+                setModal({ open: false, data: null });
             };
 
-            const deletePack = (id) => {
-                if(confirm("Delete this pack?")) setPacks(prev => prev.filter(p => p.id !== id));
+            const exportCSV = () => {
+                const headers = Object.keys(packs[0]).join(",");
+                const rows = filteredPacks.map(p => Object.values(p).join(",")).join("\n");
+                const blob = new Blob([[headers, rows].join("\n")], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ecmw_export_${new Date().toISOString().split('T')[0]}.csv`;
+                a.click();
             };
 
             return (
-                <div className="min-h-screen flex flex-col">
-                    <header className="bg-white border-b px-6 py-4 flex flex-wrap justify-between items-center sticky top-0 z-20 shadow-sm gap-4">
+                <div className="flex flex-col min-h-screen pb-12">
+                    {/* NAVBAR */}
+                    <nav className="glass sticky top-0 z-30 border-b border-slate-200 px-6 py-4 flex justify-between items-center">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200 text-white">
-                                <i className="fas fa-microchip text-lg"></i>
+                            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-blue-200">
+                                <i className="fas fa-satellite-dish"></i>
                             </div>
-                            <h1 className="font-extrabold text-xl text-slate-800 tracking-tighter uppercase">ECMW Fleet <span className="text-indigo-600">v2.0</span></h1>
+                            <div>
+                                <h1 className="text-xl font-black text-slate-800 uppercase leading-none">ECMW GLOBAL</h1>
+                                <span className="text-[10px] font-bold text-blue-600 uppercase tracking-[0.2em]">Fleet Management</span>
+                            </div>
                         </div>
-                        <div className="flex items-center gap-4">
-                            <div className="hidden sm:block text-right border-r pr-4 border-slate-200">
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Global Capacity</p>
-                                <p className="text-lg font-black text-indigo-600 leading-none">{stats.profiles.toLocaleString()}</p>
-                            </div>
-                            <button 
-                                onClick={() => { setCurrentPack(null); setModalOpen(true); }}
-                                className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all active:scale-95"
-                            >
-                                <i className="fas fa-plus mr-2"></i>New Pack
+                        <div className="flex gap-2">
+                            <button onClick={exportCSV} className="hidden md:flex items-center gap-2 px-4 py-2 text-slate-600 font-bold text-sm hover:bg-slate-100 rounded-xl transition-all">
+                                <i className="fas fa-download"></i> Export
+                            </button>
+                            <button onClick={() => setModal({ open: true, data: null })} className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-md hover:bg-slate-800 active:scale-95 transition-all">
+                                <i className="fas fa-plus mr-2"></i> Add Pack
                             </button>
                         </div>
-                    </header>
+                    </nav>
 
-                    <main className="p-4 md:p-8 flex-1">
-                        <div className="max-w-7xl mx-auto space-y-6">
-                            {/* Search & Stats */}
-                            <div className="flex flex-col md:flex-row gap-4">
-                                <div className="flex-1 relative group">
-                                    <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors"></i>
-                                    <input 
-                                        type="text" 
-                                        placeholder="Search by IP, Pack, Team, or Entity..."
-                                        className="w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm font-medium transition-all"
-                                        value={search}
-                                        onChange={e => setSearch(e.target.value)}
-                                    />
-                                </div>
-                                <div className="bg-white px-6 py-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-                                    <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600">
-                                        <i className="fas fa-boxes-stacked"></i>
+                    <main className="max-w-[1600px] mx-auto w-full p-6 space-y-6">
+                        {/* STATS CARDS */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {[
+                                { label: 'Total Packs', val: stats.count, icon: 'fa-box', col: 'text-blue-600', bg: 'bg-blue-50' },
+                                { label: 'Total Profiles', val: stats.profiles.toLocaleString(), icon: 'fa-users', col: 'text-indigo-600', bg: 'bg-indigo-50' },
+                                { label: 'Issues/Offline', val: stats.down, icon: 'fa-exclamation-triangle', col: 'text-rose-600', bg: 'bg-rose-50' }
+                            ].map((s, i) => (
+                                <div key={i} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-5">
+                                    <div className={`w-14 h-14 ${s.bg} ${s.col} rounded-2xl flex items-center justify-center text-xl shadow-inner`}>
+                                        <i className={`fas ${s.icon}`}></i>
                                     </div>
                                     <div>
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase">Results</p>
-                                        <p className="font-black text-xl">{stats.total}</p>
+                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{s.label}</p>
+                                        <p className="text-3xl font-black text-slate-800">{s.val}</p>
                                     </div>
                                 </div>
-                            </div>
+                            ))}
+                        </div>
 
-                            {/* Main Table Card */}
-                            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
-                                <div className="overflow-x-auto custom-scrollbar">
-                                    <table className="w-full text-left border-collapse min-w-[1000px]">
-                                        <thead>
-                                            <tr className="bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                                <th className="p-5 border-b">Entity / Platform</th>
-                                                <th className="p-5 border-b">Pack / Team</th>
-                                                <th className="p-5 border-b">Server Connection</th>
-                                                <th className="p-5 border-b">Capacity</th>
-                                                <th className="p-5 border-b">Status</th>
-                                                <th className="p-5 border-b text-right">Actions</th>
+                        {/* FILTER BAR */}
+                        <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap gap-3">
+                            <div className="flex-1 min-w-[300px] relative">
+                                <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
+                                <input 
+                                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border-none rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-medium transition-all"
+                                    placeholder="Search everything..."
+                                    value={filters.search}
+                                    onChange={e => setFilters({...filters, search: e.target.value})}
+                                />
+                            </div>
+                            <select className="px-4 py-3 bg-slate-50 border-none rounded-xl font-bold text-sm outline-none" 
+                                value={filters.entity} onChange={e => setFilters({...filters, entity: e.target.value})}>
+                                <option value="">All Entities</option>
+                                {ENTITIES.map(e => <option key={e} value={e}>{e}</option>)}
+                            </select>
+                            <select className="px-4 py-3 bg-slate-50 border-none rounded-xl font-bold text-sm outline-none"
+                                value={filters.status} onChange={e => setFilters({...filters, status: e.target.value})}>
+                                <option value="">All Statuses</option>
+                                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                        </div>
+
+                        {/* DATA TABLE */}
+                        <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse min-w-[1200px]">
+                                    <thead>
+                                        <tr className="bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-[0.15em]">
+                                            <th className="p-5">Platform / Entity</th>
+                                            <th className="p-5">Pack / Team</th>
+                                            <th className="p-5">Connection / RDP</th>
+                                            <th className="p-5">Details</th>
+                                            <th className="p-5">Status</th>
+                                            <th className="p-5 text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100 text-sm font-semibold">
+                                        {filteredPacks.map(p => (
+                                            <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
+                                                <td className="p-5">
+                                                    <div className="text-blue-600 font-black">{p.entity}</div>
+                                                    <div className="text-[10px] text-slate-400 uppercase">{p.platform}</div>
+                                                </td>
+                                                <td className="p-5">
+                                                    <div className="text-slate-800 font-bold">{p.pack}</div>
+                                                    <div className="text-[10px] text-slate-400">Team {p.team} • {p.localExternal}</div>
+                                                </td>
+                                                <td className="p-5">
+                                                    <div className="font-mono text-xs text-slate-600 bg-slate-100 px-2 py-1 rounded inline-block mb-1">{p.server}</div>
+                                                    <div className="text-[10px] text-slate-400 italic">{p.rdps} • {p.password}</div>
+                                                </td>
+                                                <td className="p-5">
+                                                    <div className="font-black text-slate-700">{parseInt(p.countProfiles).toLocaleString()} Profs</div>
+                                                    <div className="text-[10px] text-slate-400 uppercase">Disk: {p.disk} • {p.browser}</div>
+                                                </td>
+                                                <td className="p-5">
+                                                    <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border ${
+                                                        p.status === 'Repoting' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
+                                                        p.status === 'DOWN' ? 'bg-rose-50 text-rose-600 border-rose-100' :
+                                                        'bg-amber-50 text-amber-600 border-amber-100'
+                                                    }`}>
+                                                        {p.status}
+                                                    </span>
+                                                </td>
+                                                <td className="p-5 text-right space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={() => setModal({ open: true, data: p })} className="w-9 h-9 text-blue-600 hover:bg-blue-50 rounded-xl transition-all"><i className="fas fa-pen-to-square"></i></button>
+                                                    <button onClick={() => setPacks(prev => prev.filter(x => x.id !== p.id))} className="w-9 h-9 text-rose-600 hover:bg-rose-50 rounded-xl transition-all"><i className="fas fa-trash-can"></i></button>
+                                                </td>
                                             </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {filtered.map(p => (
-                                                <tr key={p.id} className="hover:bg-slate-50/50 transition-colors group">
-                                                    <td className="p-5">
-                                                        <div className="font-black text-indigo-600">{p.entity}</div>
-                                                        <div className="text-[10px] text-slate-400 font-bold uppercase">{p.platform}</div>
-                                                    </td>
-                                                    <td className="p-5">
-                                                        <div className="font-bold text-slate-700">{p.pack}</div>
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-500 uppercase">Team {p.team}</span>
-                                                            <span className="text-[10px] text-slate-300">|</span>
-                                                            <span className="text-[10px] text-slate-400 font-medium">Disk {p.disk}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="p-5">
-                                                        <div className="font-mono text-xs text-slate-600 bg-slate-50 px-2 py-1 rounded-md border border-slate-100 inline-block">{p.server}</div>
-                                                        <div className="text-[10px] text-slate-400 mt-1 font-bold italic">{p.rdps}</div>
-                                                    </td>
-                                                    <td className="p-5">
-                                                        <div className="font-black text-slate-800">{parseInt(p.countProfiles).toLocaleString()}</div>
-                                                        <div className="text-[10px] text-slate-400 font-medium">{p.interval}</div>
-                                                    </td>
-                                                    <td className="p-5">
-                                                        <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border shadow-sm ${
-                                                            p.status.toLowerCase().includes('repo') ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 
-                                                            p.status.toLowerCase().includes('down') ? 'bg-rose-50 text-rose-600 border-rose-100' :
-                                                            'bg-amber-50 text-amber-600 border-amber-100'
-                                                        }`}>
-                                                            {p.status}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-5 text-right space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <button onClick={() => { setCurrentPack(p); setModalOpen(true); }} className="w-8 h-8 rounded-lg text-indigo-600 hover:bg-indigo-50 transition-colors"><i className="fas fa-edit"></i></button>
-                                                        <button onClick={() => deletePack(p.id)} className="w-8 h-8 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors"><i className="fas fa-trash"></i></button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                     </main>
 
-                    {/* Modal */}
-                    {modalOpen && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-                            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
-                                <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-                                    <h2 className="font-black text-slate-800 uppercase tracking-tight">{currentPack ? 'Edit Pack' : 'Create New Pack'}</h2>
-                                    <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl">&times;</button>
+                    {/* FULL MODAL */}
+                    {modal.open && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md overflow-y-auto">
+                            <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl my-auto animate-in fade-in zoom-in duration-200">
+                                <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center">
+                                    <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">
+                                        {modal.data ? 'Update Config' : 'New Installation'}
+                                    </h2>
+                                    <button onClick={() => setModal({open:false, data:null})} className="text-slate-300 hover:text-slate-900 text-2xl transition-colors">&times;</button>
                                 </div>
-                                <form onSubmit={handleSave} className="p-8 grid grid-cols-2 gap-4">
-                                    <div className="col-span-2 sm:col-span-1">
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Entity</label>
-                                        <input name="entity" defaultValue={currentPack?.entity} required className="w-full px-4 py-2 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" />
+                                <form onSubmit={handleSave} className="p-10 grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {[
+                                        { n: 'entity', l: 'Entity', d: modal.data?.entity, t: 'text' },
+                                        { n: 'pack', l: 'Pack Name', d: modal.data?.pack, t: 'text' },
+                                        { n: 'server', l: 'Server IP', d: modal.data?.server, t: 'text' },
+                                        { n: 'password', l: 'RDP Password', d: modal.data?.password, t: 'text' },
+                                        { n: 'countProfiles', l: 'Profiles Count', d: modal.data?.countProfiles, t: 'number' },
+                                        { n: 'rdps', l: 'RDP Identifier', d: modal.data?.rdps, t: 'text' }
+                                    ].map(f => (
+                                        <div key={f.n}>
+                                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">{f.l}</label>
+                                            <input name={f.n} type={f.t} defaultValue={f.d} required className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-white transition-all font-bold" />
+                                        </div>
+                                    ))}
+                                    <div className="md:col-span-2">
+                                        <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Current Status</label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {STATUSES.map(s => (
+                                                <label key={s} className="flex-1 min-w-[120px]">
+                                                    <input type="radio" name="status" value={s} defaultChecked={modal.data?.status === s} className="hidden peer" />
+                                                    <div className="text-center p-3 rounded-xl border border-slate-100 text-xs font-bold text-slate-400 peer-checked:bg-blue-600 peer-checked:text-white peer-checked:border-blue-600 cursor-pointer transition-all">
+                                                        {s}
+                                                    </div>
+                                                </label>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <div className="col-span-2 sm:col-span-1">
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Pack Name</label>
-                                        <input name="pack" defaultValue={currentPack?.pack} required className="w-full px-4 py-2 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" />
-                                    </div>
-                                    <div className="col-span-2">
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Server IP / Host</label>
-                                        <input name="server" defaultValue={currentPack?.server} required className="w-full px-4 py-2 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Profiles</label>
-                                        <input type="number" name="countProfiles" defaultValue={currentPack?.countProfiles} className="w-full px-4 py-2 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Status</label>
-                                        <select name="status" defaultValue={currentPack?.status || 'Reporting'} className="w-full px-4 py-2 bg-slate-50 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold">
-                                            <option>Reporting</option>
-                                            <option>Repo IPs</option>
-                                            <option>Verification</option>
-                                            <option>Hold</option>
-                                            <option>Down</option>
-                                        </select>
-                                    </div>
-                                    <button type="submit" className="col-span-2 mt-4 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-black uppercase tracking-widest shadow-lg shadow-indigo-100 transition-all active:scale-95">
-                                        Save Configuration
+                                    <button type="submit" className="md:col-span-2 mt-4 py-5 bg-blue-600 hover:bg-blue-700 text-white rounded-3xl font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-200 transition-all active:scale-[0.98]">
+                                        Confirm & Push Settings
                                     </button>
                                 </form>
                             </div>
